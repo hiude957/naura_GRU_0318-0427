@@ -1,0 +1,12 @@
+# Closed-loop evaluation config for one-month no-real-sensor rollout.
+run_dir: runs/latest
+output_root: outputs/eval
+rollout:
+  horizon_days: 30
+  use_real_sensor_after_start: false
+  update_action_state_from_schedule: true
+metrics:
+  near_zero_threshold: 0.005
+  relative_error_threshold: 0.20
+  valid_sources: [1, 2]
+

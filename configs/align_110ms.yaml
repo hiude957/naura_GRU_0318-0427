@@ -1,0 +1,19 @@
+# Fixed-grid alignment config for raw dataset -> outputs/aligned.
+input_root: dataset
+output_root: outputs/aligned
+output_format: parquet
+grid_step_ms: 110
+date_start: "20260318"
+date_end: "20260427"
+split_boundary: "20260416"
+first_day: "20260318"
+first_livedata_ts: "2026-03-18 11:14:23.321"
+apc_gap_ms: 250
+livedata_gap_ms: 2000
+action_default_path: dataset/action_default.xlsx
+sensor_default_path: null
+source_codes:
+  apc_grid: 1
+  livedata_grid: 2
+  carried_sensor: 3
+  sensor_default: 4

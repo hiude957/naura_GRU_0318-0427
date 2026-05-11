@@ -1,0 +1,31 @@
+[project]
+name = "naura-gru"
+version = "0.1.0"
+description = "GRU training pipeline for NAURA semiconductor APC/LiveData/log alignment."
+readme = "docs/project_overview.md"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy",
+    "openpyxl",
+    "pandas",
+    "pyarrow",
+    "pyyaml",
+    "torch",
+    "tqdm",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+]
+
+[tool.uv]
+package = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

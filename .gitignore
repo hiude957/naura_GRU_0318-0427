@@ -1,0 +1,63 @@
+# Data and generated artifacts
+/dataset/
+/datasets/
+/data/
+/raw_data/
+/aligned_output/
+/cache_sensor_proxy/
+/cache/
+/outputs/
+/results/
+/runs/
+/checkpoints/
+/models/
+*.ckpt
+*.pt
+*.pth
+*.onnx
+*.npy
+*.npz
+*.parquet
+*.feather
+*.tsv
+*.csv
+*.xlsx
+
+# Training logs and experiment trackers
+/logs/
+/tensorboard/
+/wandb/
+/mlruns/
+*.log
+
+# Python and uv
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+.uv-cache/
+uv-cache/
+uv-tmp/
+
+# Local environment and editor files
+.env
+.env.*
+!.env.example
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Temporary files
+tmp/
+temp/
+*.tmp

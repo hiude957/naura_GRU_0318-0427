@@ -1,0 +1,18 @@
+# Cache-building config for outputs/aligned -> outputs/cache.
+aligned_root: outputs/aligned
+cache_root: outputs/cache
+cache_name: fixed_110ms_v1
+split_from_manifest: true
+source_codes:
+  real_sensor: [1, 2]
+  carried_sensor: 3
+  sensor_default: 4
+time_feature_cap_ms: 86400000
+max_target_dt_ms: 600000
+include_features:
+  sensors: true
+  masks: true
+  evt: true
+  state: true
+  source_onehot: true
+  time_features: true

@@ -1,0 +1,26 @@
+# A100 80G starting-point config. Tune from experiment Markdown records.
+run_name: gru_a100_baseline
+cache_dir: outputs/cache/fixed_110ms_v1
+run_root: runs
+model:
+  type: gru
+  hidden_size: 512
+  num_layers: 2
+  dropout: 0.1
+train:
+  seq_len: 1024
+  batch_size: 256
+  epochs: 50
+  lr: 0.001
+  weight_decay: 0.0001
+  optimizer: adamw
+  precision: bf16
+  gradient_clip: 1.0
+  num_workers: 8
+  pin_memory: true
+  seed: 20260511
+checkpoint:
+  save_best: true
+  save_last: true
+  monitor: val_loss
+
