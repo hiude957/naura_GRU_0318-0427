@@ -82,20 +82,27 @@ def build_cache_for_day(aligned_path, cache_dir, config):
     within_gap = has_future & (future_gap <= int(config.get("max_target_dt_ms", 600_000)))
 
     target_delta = np.zeros_like(sensors, dtype=np.float32)
+    target_sensor = np.zeros_like(sensors, dtype=np.float32)
+    target_mask = np.zeros_like(masks, dtype=np.int8)
     target_source = np.zeros(len(ts_ms), dtype=np.int8)
     target_log_dt = np.zeros(len(ts_ms), dtype=np.float32)
     loss_mask = np.zeros_like(masks, dtype=np.int8)
     idx = np.flatnonzero(within_gap)
     if len(idx):
         fut = future_idx[idx]
+        target_sensor[idx] = sensors[fut]
         target_delta[idx] = sensors[fut] - sensors[idx]
+        target_mask[idx] = masks[fut].astype(np.int8)
         target_source[idx] = source_code[fut]
         target_log_dt[idx] = np.log1p(future_gap[idx]).astype(np.float32)
         loss_mask[idx] = (masks[idx].astype(bool) & masks[fut].astype(bool)).astype(np.int8)
-    valid_target = loss_mask.any(axis=1)
+    valid_target = target_mask.any(axis=1)
     sample_weight = valid_target.astype(np.float32)
 
     np.save(cache_dir / "features.npy", features)
+    if bool(config.get("write_target_sensor", True)):
+        np.save(cache_dir / "target_sensor.npy", target_sensor)
+    np.save(cache_dir / "target_mask.npy", target_mask)
     np.save(cache_dir / "target_delta.npy", target_delta)
     np.save(cache_dir / "target_log_dt.npy", target_log_dt)
     np.save(cache_dir / "loss_mask.npy", loss_mask)

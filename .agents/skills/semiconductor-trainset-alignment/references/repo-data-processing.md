@@ -144,10 +144,12 @@ For current row `row_i`, the target is:
 From that future real-sensor row, the repo builds:
 
 - `target_source`: future real source code (`1` or `2`)
+- `target_sensor`: future full normalized sensor value, used by the current full-prediction GRU
 - `target_delta`: `future_sensor - current_sensor`
 - `target_log_dt`: `log1p(future_ts - current_ts)`
-- `loss_mask`: only dims where both current and future masks are valid
-- `valid_target`: future row exists, gap is valid, and at least one loss dim is valid
+- `target_mask`: only dims where the future real-sensor mask is valid
+- `loss_mask`: compatibility array for dims where both current and future masks are valid
+- `valid_target`: future row exists, gap is valid, and at least one `target_mask` dim is valid
 
 Log rows stay in inputs, but they are never chosen as sensor targets.
 
@@ -158,6 +160,8 @@ Under the fixed grid policy, `carried_sensor` and `sensor_default` rows may stay
 Per-day arrays written under `cache_sensor_proxy/<date>/`:
 
 - `features.npy`
+- `target_sensor.npy`
+- `target_mask.npy`
 - `target_delta.npy`
 - `target_log_dt.npy`
 - `loss_mask.npy`

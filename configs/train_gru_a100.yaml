@@ -1,12 +1,63 @@
 # A100 80G starting-point config. Tune from experiment Markdown records.
-run_name: gru_a100_baseline
-cache_dir: outputs/cache/fixed_110ms_v1
+run_name: gru_full_sensor_rollout
 run_root: runs
+data:
+  cache_dir: outputs/cache/fixed_110ms_v1
+  train_stride: 512
+  val_stride: 1024
+  skip_empty_target_windows: true
 model:
   type: gru
+  input_size: 551
+  output_size: 150
   hidden_size: 512
   num_layers: 2
   dropout: 0.1
+target:
+  mode: full_sensor
+  continuous_loss_weight: 1.0
+  binary_loss_weight: 1.0
+  binary_sensor_indices_1based:
+    - 22
+    - 93
+    - 94
+    - 95
+    - 96
+    - 97
+    - 98
+    - 99
+    - 100
+    - 101
+    - 102
+    - 103
+    - 104
+    - 105
+    - 106
+    - 107
+    - 108
+    - 109
+    - 110
+    - 111
+    - 112
+    - 113
+    - 114
+    - 115
+    - 116
+    - 117
+    - 118
+    - 119
+    - 120
+    - 121
+    - 122
+    - 123
+    - 124
+    - 125
+    - 126
+    - 127
+    - 128
+    - 146
+    - 147
+    - 148
 train:
   seq_len: 1024
   batch_size: 256
@@ -19,8 +70,26 @@ train:
   num_workers: 8
   pin_memory: true
   seed: 20260511
+metrics:
+  near_zero_threshold: 0.005
+  relative_error_threshold: 0.20
 checkpoint:
   save_best: true
   save_last: true
   monitor: val_loss
-
+stages:
+  - name: stage1_teacher_forcing
+    mode: teacher_forcing
+    seq_len: 1024
+    batch_size: 256
+    epochs: 50
+    lr: 0.001
+  - name: stage2_rollout_finetune
+    mode: rollout
+    init_from: stage1_best
+    context_len: 1024
+    rollout_steps: 128
+    rollout_loss_weight: 0.2
+    batch_size: 64
+    epochs: 20
+    lr: 0.0003

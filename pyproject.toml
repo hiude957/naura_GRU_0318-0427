@@ -3,14 +3,14 @@ name = "naura-gru"
 version = "0.1.0"
 description = "GRU training pipeline for NAURA semiconductor APC/LiveData/log alignment."
 readme = "docs/project_overview.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.12"
 dependencies = [
     "numpy",
     "openpyxl",
     "pandas",
     "pyarrow",
     "pyyaml",
-    "torch",
+    "torch==2.3.1",
     "tqdm",
 ]
 

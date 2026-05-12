@@ -9,6 +9,8 @@ source_codes:
   sensor_default: 4
 time_feature_cap_ms: 86400000
 max_target_dt_ms: 600000
+target_mode: full_sensor
+write_target_sensor: true
 include_features:
   sensors: true
   masks: true

@@ -35,6 +35,9 @@
 - `num_layers = 2`
 - `dropout = 0.1`
 - `seq_len = 1024`
+- 第一版直接预测全量 `150` 个归一化 sensor，不预测 delta
+- 连续类 sensor 使用 `MAE`
+- 二值类 sensor 使用 `BCEWithLogitsLoss`
 - 显存允许时试 `seq_len = 2048`
 - `batch_size = 256`
 - `seq_len = 1024` 且显存充足时可试 `batch_size = 512`
@@ -45,6 +48,21 @@
 - optimizer 使用 `AdamW`
 - `lr = 1e-3`
 - `weight_decay = 1e-4`
+
+当前推荐训练流程分两阶段：
+
+1. `stage1_teacher_forcing`：非闭环监督训练，`seq_len=1024`、`batch_size=256`、`lr=1e-3`、`epochs=50`。
+2. `stage2_rollout_finetune`：从 stage1 best checkpoint 启动，`context_len=1024`、`rollout_steps=128`、`batch_size=64`、`lr=3e-4`、`rollout_loss_weight=0.2`、`epochs=20`。
+
+Stage 2 的 rollout 训练规则：
+
+- 起始 `context_len` 使用真实历史窗口初始化 GRU hidden state。
+- rollout 段不再使用真实 sensor 修正输入，sensor 输入由模型上一时刻预测值回灌。
+- action、state、time 仍来自 aligned/cache 序列。
+- 真实 sensor 只用于计算 loss。
+- 连续类预测回灌前 clamp 到 `[0, 1]`。
+- 二值类 loss 用 logits，回灌用 `sigmoid(logits)` 概率值，评估时再按阈值判断类别。
+- rollout 输入中的 sensor mask 置为 `0`，source_onehot 置为 `carried_sensor`。
 
 如果出现显存不足：
 

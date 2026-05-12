@@ -1,13 +1,41 @@
-"""GRU model definition for sensor prediction."""
+"""GRU model definition for full sensor prediction."""
+
+from __future__ import annotations
+
+import torch
+from torch import nn
 
 
-class SensorGRU:
-    """Placeholder for the project GRU model.
+class SensorGRU(nn.Module):
+    """GRU that predicts all normalized sensor values for each input step."""
 
-    Planned inputs: [sensors, masks, evt, state, source_onehot, time_features].
-    Planned output: normalized sensor prediction or delta prediction.
-    """
+    def __init__(
+        self,
+        input_size: int = 551,
+        hidden_size: int = 512,
+        num_layers: int = 2,
+        dropout: float = 0.1,
+        output_size: int = 150,
+    ):
+        super().__init__()
+        self.input_size = int(input_size)
+        self.output_size = int(output_size)
+        self.gru = nn.GRU(
+            input_size=self.input_size,
+            hidden_size=int(hidden_size),
+            num_layers=int(num_layers),
+            dropout=float(dropout) if int(num_layers) > 1 else 0.0,
+            batch_first=True,
+        )
+        self.head = nn.Linear(int(hidden_size), self.output_size)
 
-    def __init__(self, *_args, **_kwargs):
-        raise NotImplementedError("Implement torch.nn.Module GRU model here.")
+    def forward(
+        self, x: torch.Tensor, hidden: torch.Tensor | None = None
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return raw full-sensor predictions and the final hidden state.
 
+        Continuous sensor dimensions use the raw output directly for MAE.
+        Binary sensor dimensions are treated as logits by the loss and rollout code.
+        """
+        output, hidden = self.gru(x, hidden)
+        return self.head(output), hidden
