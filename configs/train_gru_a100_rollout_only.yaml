@@ -1,0 +1,96 @@
+# A100 80G rollout-only config from random initialization.
+run_name: gru_full_sensor_fromscratch_rollout_only_64
+run_root: runs
+data:
+  cache_dir: outputs/cache/fixed_110ms_v1
+  train_stride: 128
+  val_stride: 256
+  skip_empty_target_windows: true
+model:
+  type: gru
+  input_size: 551
+  output_size: 150
+  hidden_size: 512
+  num_layers: 2
+  dropout: 0.1
+target:
+  mode: full_sensor
+  continuous_loss_weight: 1.0
+  binary_loss_weight: 1.0
+  continuous_action_weight:
+    enabled: true
+    window_ms: 10000
+    weight: 2.0
+  binary_sensor_indices_1based:
+    - 22
+    - 93
+    - 94
+    - 95
+    - 96
+    - 97
+    - 98
+    - 99
+    - 100
+    - 101
+    - 102
+    - 103
+    - 104
+    - 105
+    - 106
+    - 107
+    - 108
+    - 109
+    - 110
+    - 111
+    - 112
+    - 113
+    - 114
+    - 115
+    - 116
+    - 117
+    - 118
+    - 119
+    - 120
+    - 121
+    - 122
+    - 123
+    - 124
+    - 125
+    - 126
+    - 127
+    - 128
+    - 146
+    - 147
+    - 148
+train:
+  seq_len: 256
+  batch_size: 96
+  epochs: 15
+  lr: 0.0002
+  weight_decay: 0.0001
+  optimizer: adamw
+  precision: bf16
+  gradient_clip: 1.0
+  num_workers: 8
+  pin_memory: true
+  seed: 20260511
+metrics:
+  near_zero_threshold: 0.005
+  relative_error_threshold: 0.20
+checkpoint:
+  save_best: true
+  save_best_accuracy: true
+  save_last: true
+  monitor: val_loss
+stages:
+  - name: rollout_only_from_scratch
+    mode: rollout_only
+    context_len: 256
+    rollout_steps: 64
+    batch_size: 96
+    val_batch_size: 128
+    epochs: 15
+    lr: 0.0002
+    weight_decay: 0.0001
+    gradient_clip: 1.0
+    precision: bf16

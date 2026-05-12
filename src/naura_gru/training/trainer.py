@@ -16,12 +16,17 @@ from tqdm import tqdm
 
 from naura_gru.evaluation.metrics import normalized_accuracy_torch
 from naura_gru.models.gru import SensorGRU
-from naura_gru.training.dataset import make_dataloaders
+from naura_gru.training.dataset import SENSOR_DIM, make_dataloaders
 from naura_gru.training.losses import (
     DEFAULT_BINARY_SENSOR_INDICES_1BASED,
     masked_sensor_loss,
 )
-from naura_gru.training.rollout import SINCE_REAL_OFFSET, make_rollout_input, sensor_feedback_from_prediction
+from naura_gru.training.rollout import (
+    SINCE_ACTION_OFFSET,
+    SINCE_REAL_OFFSET,
+    make_rollout_input,
+    sensor_feedback_from_prediction,
+)
 from naura_gru.utils.seed import seed_everything
 
 
@@ -59,6 +64,7 @@ def _build_model(config: dict[str, Any]) -> SensorGRU:
         num_layers=int(model_config.get("num_layers", 2)),
         dropout=float(model_config.get("dropout", 0.1)),
         output_size=int(model_config.get("output_size", 150)),
+        head_layer_norm=bool(model_config.get("head_layer_norm", False)),
     )
 
 
@@ -83,17 +89,114 @@ def _loss_kwargs(config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _time_feature_cap_ms(config: dict[str, Any], stage: dict[str, Any]) -> float:
+    data_config = config.get("data", {})
+    return float(
+        stage.get(
+            "time_feature_cap_ms",
+            data_config.get("time_feature_cap_ms", config.get("time_feature_cap_ms", 86_400_000)),
+        )
+    )
+
+
+def _continuous_action_weight_tensors(
+    features: torch.Tensor,
+    config: dict[str, Any],
+    stage: dict[str, Any],
+) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+    target_config = config.get("target", {})
+    action_config = dict(target_config.get("continuous_action_weight", {}))
+    action_config.update(stage.get("continuous_action_weight", {}))
+    if not bool(action_config.get("enabled", False)):
+        return None, None
+
+    window_ms = float(action_config.get("window_ms", 10_000))
+    weight = float(action_config.get("weight", 2.0))
+    if weight <= 0:
+        raise ValueError("continuous_action_weight.weight must be positive")
+    threshold = window_ms / _time_feature_cap_ms(config, stage)
+    action_mask = features[..., SINCE_ACTION_OFFSET] <= threshold
+    weight_tensor = torch.where(
+        action_mask,
+        features.new_full(action_mask.shape, weight),
+        features.new_ones(action_mask.shape),
+    )
+    return weight_tensor, action_mask
+
+
+def _continuous_change_weight_tensors(
+    features: torch.Tensor,
+    target: torch.Tensor,
+    config: dict[str, Any],
+    stage: dict[str, Any],
+) -> tuple[torch.Tensor | None, torch.Tensor | None, float | None]:
+    target_config = config.get("target", {})
+    change_config = dict(target_config.get("continuous_change_weight", {}))
+    change_config.update(stage.get("continuous_change_weight", {}))
+    if not bool(change_config.get("enabled", False)):
+        return None, None, None
+
+    change_threshold = float(change_config.get("change_threshold", 0.005))
+    active_threshold = float(change_config.get("active_threshold", 0.01))
+    change_weight = float(change_config.get("change_loss_weight", 3.0))
+    max_weight = float(change_config.get("max_loss_weight", 5.0))
+    if change_weight <= 0:
+        raise ValueError("continuous_change_weight.change_loss_weight must be positive")
+
+    current_sensor = features[..., :SENSOR_DIM]
+    change_mask = (target - current_sensor).abs() >= change_threshold
+    if active_threshold > 0:
+        active_mask = (target.abs() >= active_threshold) | (current_sensor.abs() >= active_threshold)
+        change_mask = change_mask & active_mask
+    weight_tensor = torch.where(
+        change_mask,
+        features.new_full(change_mask.shape, change_weight),
+        features.new_ones(change_mask.shape),
+    )
+    if max_weight > 0:
+        weight_tensor = weight_tensor.clamp_max(max_weight)
+    return weight_tensor, change_mask, max_weight if max_weight > 0 else None
+
+
+def _continuous_loss_weight_tensors(
+    features: torch.Tensor,
+    target: torch.Tensor,
+    config: dict[str, Any],
+    stage: dict[str, Any],
+) -> tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None]:
+    action_weight, action_mask = _continuous_action_weight_tensors(features, config, stage)
+    change_weight, change_mask, max_weight = _continuous_change_weight_tensors(
+        features, target, config, stage
+    )
+    if action_weight is None:
+        combined_weight = change_weight
+    elif change_weight is None:
+        combined_weight = action_weight
+    else:
+        combined_weight = action_weight.unsqueeze(-1) * change_weight
+    if combined_weight is not None and max_weight is not None:
+        combined_weight = combined_weight.clamp_max(max_weight)
+    return combined_weight, action_mask, change_mask
+
+
 def _teacher_forcing_step(
     model: SensorGRU,
     batch: dict[str, torch.Tensor],
     config: dict[str, Any],
+    stage: dict[str, Any],
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor], torch.Tensor]:
+    continuous_sample_weight, continuous_action_mask, continuous_change_mask = (
+        _continuous_loss_weight_tensors(batch["features"], batch["target"], config, stage)
+    )
     pred, _hidden = model(batch["features"])
     losses = masked_sensor_loss(
         pred,
         batch["target"],
         batch["target_mask"],
         batch.get("sample_weight"),
+        continuous_sample_weight=continuous_sample_weight,
+        continuous_action_mask=continuous_action_mask,
+        continuous_change_mask=continuous_change_mask,
         **_loss_kwargs(config),
     )
     metric_pred = sensor_feedback_from_prediction(pred, _binary_indices(config))
@@ -106,6 +209,8 @@ def _rollout_step(
     config: dict[str, Any],
     stage: dict[str, Any],
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor], torch.Tensor, torch.Tensor, torch.Tensor]:
+    mode = str(stage.get("mode", "teacher_forcing"))
+    rollout_only = mode == "rollout_only"
     context_len = int(stage.get("context_len", config.get("train", {}).get("seq_len", 1024)))
     rollout_steps = int(stage.get("rollout_steps", 128))
     rollout_weight = float(stage.get("rollout_loss_weight", 0.2))
@@ -115,17 +220,32 @@ def _rollout_step(
 
     context = features[:, :context_len]
     context_pred, hidden = model(context)
-    teacher_losses = masked_sensor_loss(
-        context_pred,
-        batch["target"][:, :context_len],
-        batch["target_mask"][:, :context_len],
-        batch["sample_weight"][:, :context_len],
-        **_loss_kwargs(config),
-    )
+    teacher_losses = None
+    if not rollout_only:
+        context_target = batch["target"][:, :context_len]
+        context_weight, context_action_mask, context_change_mask = _continuous_loss_weight_tensors(
+            context,
+            context_target,
+            config,
+            stage,
+        )
+        teacher_losses = masked_sensor_loss(
+            context_pred,
+            context_target,
+            batch["target_mask"][:, :context_len],
+            batch["sample_weight"][:, :context_len],
+            continuous_sample_weight=context_weight,
+            continuous_action_mask=context_action_mask,
+            continuous_change_mask=context_change_mask,
+            **_loss_kwargs(config),
+        )
 
-    previous_sensor = sensor_feedback_from_prediction(
-        context_pred[:, -1, :], _binary_indices(config)
-    ).detach()
+    if rollout_only:
+        previous_sensor = context[:, -1, :SENSOR_DIM].detach()
+    else:
+        previous_sensor = sensor_feedback_from_prediction(
+            context_pred[:, -1, :], _binary_indices(config)
+        ).detach()
     previous_since_real = context[:, -1, SINCE_REAL_OFFSET]
     rollout_preds: list[torch.Tensor] = []
 
@@ -143,21 +263,40 @@ def _rollout_step(
     rollout_target = batch["target"][:, context_len : context_len + rollout_steps]
     rollout_mask = batch["target_mask"][:, context_len : context_len + rollout_steps]
     rollout_weight_tensor = batch["sample_weight"][:, context_len : context_len + rollout_steps]
+    continuous_sample_weight, continuous_action_mask, continuous_change_mask = (
+        _continuous_loss_weight_tensors(
+            features[:, context_len : context_len + rollout_steps],
+            rollout_target,
+            config,
+            stage,
+        )
+    )
     rollout_losses = masked_sensor_loss(
         rollout_pred,
         rollout_target,
         rollout_mask,
         rollout_weight_tensor,
+        continuous_sample_weight=continuous_sample_weight,
+        continuous_action_mask=continuous_action_mask,
+        continuous_change_mask=continuous_change_mask,
         **_loss_kwargs(config),
     )
-    loss = teacher_losses["loss"] + rollout_weight * rollout_losses["loss"]
+    if rollout_only:
+        loss = rollout_losses["loss"]
+    else:
+        loss = teacher_losses["loss"] + rollout_weight * rollout_losses["loss"]
     metrics = {
         "loss": loss,
-        "teacher_loss": teacher_losses["loss"].detach(),
         "rollout_loss": rollout_losses["loss"].detach(),
         "continuous_loss": rollout_losses["continuous_loss"],
         "binary_loss": rollout_losses["binary_loss"],
+        "continuous_action_loss": rollout_losses["continuous_action_loss"],
+        "continuous_action_points": rollout_losses["continuous_action_points"],
+        "continuous_change_loss": rollout_losses["continuous_change_loss"],
+        "continuous_change_points": rollout_losses["continuous_change_points"],
     }
+    if teacher_losses is not None:
+        metrics["teacher_loss"] = teacher_losses["loss"].detach()
     metric_pred = sensor_feedback_from_prediction(rollout_pred, _binary_indices(config))
     return loss, metrics, metric_pred, rollout_target, rollout_mask
 
@@ -188,12 +327,12 @@ def _run_epoch(
             optimizer.zero_grad(set_to_none=True)
 
         with _autocast_context(device, precision):
-            if stage.get("mode", "teacher_forcing") == "rollout":
+            if stage.get("mode", "teacher_forcing") in {"rollout", "rollout_only"}:
                 loss, losses, metric_pred, metric_target, metric_mask = _rollout_step(
                     model, batch, config, stage
                 )
             else:
-                loss, losses, metric_pred = _teacher_forcing_step(model, batch, config)
+                loss, losses, metric_pred = _teacher_forcing_step(model, batch, config, stage)
                 metric_target = batch["target"]
                 metric_mask = batch["target_mask"]
 
@@ -309,6 +448,7 @@ def train(config: dict[str, Any]):
         optimizer = _optimizer(model, config, stage)
         epochs = int(stage.get("epochs", config.get("train", {}).get("epochs", 1)))
         best_metric = float("inf")
+        best_accuracy = float("-inf")
 
         for epoch in range(1, epochs + 1):
             train_metrics = _run_epoch(model, train_loader, config, stage, device, optimizer)
@@ -347,11 +487,26 @@ def train(config: dict[str, Any]):
                 best_metric = current
                 best_checkpoint = checkpoint_dir / f"{stage_name}_best.pt"
                 _save_checkpoint(best_checkpoint, model, optimizer, config, stage, epoch, val_metrics)
+            current_accuracy = float(val_metrics.get("accuracy", 0.0))
+            if current_accuracy > best_accuracy:
+                best_accuracy = current_accuracy
+                _save_checkpoint(
+                    checkpoint_dir / f"{stage_name}_best_acc.pt",
+                    model,
+                    optimizer,
+                    config,
+                    stage,
+                    epoch,
+                    val_metrics,
+                )
 
         if bool(config.get("checkpoint", {}).get("save_last", True)):
             shutil.copy2(run_dir / "checkpoints" / f"{stage_name}_last.pt", run_dir / "checkpoints" / "last.pt")
         if best_checkpoint is not None and bool(config.get("checkpoint", {}).get("save_best", True)):
             shutil.copy2(best_checkpoint, run_dir / "checkpoints" / "best.pt")
+        best_acc_path = run_dir / "checkpoints" / f"{stage_name}_best_acc.pt"
+        if best_acc_path.exists() and bool(config.get("checkpoint", {}).get("save_best_accuracy", True)):
+            shutil.copy2(best_acc_path, run_dir / "checkpoints" / "best_acc.pt")
 
     _write_latest_pointer(run_dir)
     print(f"[train] run_dir={run_dir}", flush=True)

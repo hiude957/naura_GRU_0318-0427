@@ -31,6 +31,12 @@ class CachedDay:
         self.features = np.load(self.cache_dir / "features.npy", mmap_mode="r")
         self.sample_weight = np.load(self.cache_dir / "sample_weight.npy", mmap_mode="r")
         self.valid_target = np.load(self.cache_dir / "valid_target.npy", mmap_mode="r")
+        has_action_path = self.cache_dir / "has_action.npy"
+        self.has_action = (
+            np.load(has_action_path, mmap_mode="r")
+            if has_action_path.exists()
+            else np.zeros(len(self.features), dtype=np.int8)
+        )
 
         target_sensor_path = self.cache_dir / "target_sensor.npy"
         self.target_sensor = (
@@ -122,12 +128,14 @@ class SequenceWindowDataset(Dataset):
         target = day.target_slice(start, end)
         target_mask = np.array(day.target_mask[start:end], dtype=np.float32, copy=True)
         sample_weight = np.array(day.sample_weight[start:end], dtype=np.float32, copy=True)
+        has_action = np.array(day.has_action[start:end], dtype=np.float32, copy=True)
 
         return {
             "features": torch.from_numpy(features),
             "target": torch.from_numpy(target),
             "target_mask": torch.from_numpy(target_mask),
             "sample_weight": torch.from_numpy(sample_weight),
+            "has_action": torch.from_numpy(has_action),
         }
 
 
@@ -148,7 +156,7 @@ def make_dataloaders(config: dict[str, Any], stage: dict[str, Any] | None = None
         raise ValueError("cache_dir must be set in config.cache_dir or config.data.cache_dir")
 
     mode = stage.get("mode", "teacher_forcing")
-    if mode == "rollout":
+    if mode in {"rollout", "rollout_only"}:
         seq_len = int(stage.get("context_len", train_config.get("seq_len", 1024))) + int(
             stage.get("rollout_steps", 128)
         )

@@ -16,18 +16,26 @@ class SensorGRU(nn.Module):
         num_layers: int = 2,
         dropout: float = 0.1,
         output_size: int = 150,
+        head_layer_norm: bool = False,
     ):
         super().__init__()
         self.input_size = int(input_size)
+        self.hidden_size = int(hidden_size)
         self.output_size = int(output_size)
         self.gru = nn.GRU(
             input_size=self.input_size,
-            hidden_size=int(hidden_size),
+            hidden_size=self.hidden_size,
             num_layers=int(num_layers),
             dropout=float(dropout) if int(num_layers) > 1 else 0.0,
             batch_first=True,
         )
-        self.head = nn.Linear(int(hidden_size), self.output_size)
+        if head_layer_norm:
+            self.head = nn.Sequential(
+                nn.LayerNorm(self.hidden_size),
+                nn.Linear(self.hidden_size, self.output_size),
+            )
+        else:
+            self.head = nn.Linear(self.hidden_size, self.output_size)
 
     def forward(
         self, x: torch.Tensor, hidden: torch.Tensor | None = None
